@@ -1,34 +1,35 @@
-# Dyad
+# Cryzo v10
 
-Dyad is a local, open-source AI app builder. It's fast, private, and fully under your control — like Lovable, v0, or Bolt, but running right on your machine.
+Cryzo v10 is a Vite React web app with Vercel API functions. Firebase Auth is
+used for identity, Supabase Postgres stores app/chat state, and the server reads
+AI provider keys from environment variables.
 
-[![Image](https://github.com/user-attachments/assets/f6c83dfc-6ffd-4d32-93dd-4b9c46d17790)](https://dyad.sh/)
+## Local Development
 
-More info at: [https://dyad.sh/](https://dyad.sh/)
+```bash
+npm install
+npm run dev
+```
 
-## 🚀 Features
+## Required Environment
 
-- ⚡️ **Local**: Fast, private and no lock-in.
-- 🛠 **Bring your own keys**: Use your own AI API keys — no vendor lock-in.
-- 🖥️ **Cross-platform**: Easy to run on Mac or Windows.
+```bash
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_APP_ID=
+FIREBASE_PROJECT_ID=
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o-mini
+```
 
-## 📦 Download
+Apply `supabase/migrations/0001_cryzo_v10.sql` to the Supabase project that
+backs the app. The API uses the service role key server-side and scopes every
+request by verified Firebase UID.
 
-No sign-up required. Just download and go.
+## Deployment
 
-### [👉 Download for your platform](https://www.dyad.sh/#download)
-
-## 🤝 Community
-
-Join our growing community of AI app builders on **Reddit**: [r/dyadbuilders](https://www.reddit.com/r/dyadbuilders/) - share your projects and get help from the community!
-
-## 🛠️ Contributing
-
-**Dyad** is open-source (see License info below).
-
-If you're interested in contributing to dyad, please read our [contributing](./CONTRIBUTING.md) doc.
-
-## License
-
-- All the code in this repo outside of `src/pro` is open-source and licensed under Apache 2.0 - see [LICENSE](./LICENSE).
-- All the code in this repo within `src/pro` is fair-source and licensed under [Functional Source License 1.1 Apache 2.0](https://fsl.software/) - see [LICENSE](./src/pro/LICENSE).
+Push this repo to GitHub, connect it in Vercel, and set the environment
+variables above in the Vercel project settings.
