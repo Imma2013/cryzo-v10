@@ -7,7 +7,8 @@ import {
   type ApiRequest,
   type ApiResponse,
 } from "../_lib/http";
-import { ensureUser, supabaseRequest, userFilter } from "../_lib/supabase";
+import { ensureUser, listMessages } from "../_lib/convex";
+import type { Id } from "../../convex/_generated/dataModel";
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   await handleApi(res, async () => {
@@ -21,9 +22,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       return;
     }
 
-    const messages = await supabaseRequest(
-      `messages?${userFilter(user)}&chat_id=eq.${chatId}&select=*&order=created_at.asc`,
-    );
+    const messages = await listMessages(user, chatId as Id<"chats">);
     sendJson(res, 200, { messages });
   });
 }

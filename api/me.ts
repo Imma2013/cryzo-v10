@@ -1,6 +1,6 @@
 import { requireUser } from "./_lib/firebase";
 import { handleApi, methodGuard, sendJson, type ApiRequest, type ApiResponse } from "./_lib/http";
-import { ensureUser } from "./_lib/supabase";
+import { ensureUser } from "./_lib/convex";
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   await handleApi(res, async () => {

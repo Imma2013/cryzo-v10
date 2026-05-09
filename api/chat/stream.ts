@@ -8,18 +8,18 @@ import {
   type ApiResponse,
 } from "../_lib/http";
 import { streamOpenAiResponse } from "../_lib/openai";
-import { ensureUser, supabaseRequest, userFilter } from "../_lib/supabase";
+import {
+  ensureUser,
+  getChat,
+  createMessage,
+  listMessages,
+  touchChat,
+} from "../_lib/convex";
+import type { Id } from "../../convex/_generated/dataModel";
 
 type StreamPayload = {
   chatId?: string;
   prompt?: string;
-};
-
-type DbMessage = {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  model: string | null;
 };
 
 function writeSse(res: ApiResponse, data: unknown) {
@@ -37,7 +37,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const user = await requireUser(req);
     await ensureUser(user);
     const body = await readJson<StreamPayload>(req);
-    const chatId = body.chatId;
+    const chatId = body.chatId as Id<"chats"> | undefined;
     const prompt = body.prompt?.trim();
 
     if (!chatId || !prompt) {
@@ -45,10 +45,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       return;
     }
 
-    const chatRows = await supabaseRequest<unknown[]>(
-      `chats?${userFilter(user)}&id=eq.${chatId}&select=id,app_id&limit=1`,
-    );
-    if (!chatRows.length) {
+    const chat = await getChat(user, chatId);
+    if (!chat) {
       sendJson(res, 404, { error: "Chat not found." });
       return;
     }
@@ -57,20 +55,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
 
-    await supabaseRequest("messages", {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify({
-        firebase_uid: user.uid,
-        chat_id: chatId,
-        role: "user",
-        content: prompt,
-      }),
-    });
+    await createMessage(user, chatId, "user", prompt);
 
-    const history = await supabaseRequest<DbMessage[]>(
-      `messages?${userFilter(user)}&chat_id=eq.${chatId}&select=role,content,model&order=created_at.asc&limit=20`,
-    );
+    const history = await listMessages(user, chatId);
 
     let assistantContent = "";
     try {
@@ -82,34 +69,28 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
             "You are Cryzo, an AI app-building assistant. Be concise, practical, and focus on implementable web app steps.",
         },
         ...history
-          .filter((message) => message.role === "user" || message.role === "assistant")
-          .map((message) => ({
-            role: message.role as "user" | "assistant",
-            content: message.content,
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .slice(-20)
+          .map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
           })),
       ])) {
         assistantContent += chunk;
         writeSse(res, { type: "chunk", content: chunk });
       }
 
-      const inserted = await supabaseRequest<DbMessage[]>("messages", {
-        method: "POST",
-        headers: { Prefer: "return=representation" },
-        body: JSON.stringify({
-          firebase_uid: user.uid,
-          chat_id: chatId,
-          role: "assistant",
-          content: assistantContent,
-          model,
-        }),
-      });
+      const inserted = await createMessage(
+        user,
+        chatId,
+        "assistant",
+        assistantContent,
+        model,
+      );
 
-      await supabaseRequest(`chats?id=eq.${chatId}&${userFilter(user)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ updated_at: new Date().toISOString() }),
-      });
+      await touchChat(user, chatId);
 
-      writeSse(res, { type: "done", message: inserted[0] });
+      writeSse(res, { type: "done", message: inserted });
       res.end();
     } catch (error) {
       writeSse(res, {

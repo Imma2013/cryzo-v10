@@ -8,7 +8,8 @@ import {
   type ApiRequest,
   type ApiResponse,
 } from "../_lib/http";
-import { ensureUser, supabaseRequest, userFilter } from "../_lib/supabase";
+import { ensureUser, listChats, createChat, getApp } from "../_lib/convex";
+import type { Id } from "../../convex/_generated/dataModel";
 
 type ChatPayload = {
   appId?: string;
@@ -28,32 +29,23 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         return;
       }
 
-      const appRows = await supabaseRequest<unknown[]>(
-        `apps?${userFilter(user)}&id=eq.${body.appId}&select=id&limit=1`,
-      );
-      if (!appRows.length) {
+      const app = await getApp(user, body.appId as Id<"apps">);
+      if (!app) {
         sendJson(res, 404, { error: "App not found." });
         return;
       }
 
-      const rows = await supabaseRequest("chats", {
-        method: "POST",
-        headers: { Prefer: "return=representation" },
-        body: JSON.stringify({
-          firebase_uid: user.uid,
-          app_id: body.appId,
-          title: body.title?.trim() || "New chat",
-        }),
-      });
-      sendJson(res, 201, { chat: Array.isArray(rows) ? rows[0] : rows });
+      const chat = await createChat(
+        user,
+        body.appId as Id<"apps">,
+        body.title?.trim(),
+      );
+      sendJson(res, 201, { chat });
       return;
     }
 
-    const appId = firstQueryValue(req.query?.appId);
-    const appFilter = appId ? `&app_id=eq.${appId}` : "";
-    const chats = await supabaseRequest(
-      `chats?${userFilter(user)}${appFilter}&select=*&order=updated_at.desc`,
-    );
+    const appId = firstQueryValue(req.query?.appId) as Id<"apps"> | undefined;
+    const chats = await listChats(user, appId);
     sendJson(res, 200, { chats });
   });
 }

@@ -7,7 +7,7 @@ import {
   type ApiRequest,
   type ApiResponse,
 } from "./_lib/http";
-import { ensureUser, supabaseRequest, userFilter } from "./_lib/supabase";
+import { ensureUser, getSettings, upsertSettings } from "./_lib/convex";
 
 type SettingsPayload = {
   default_model?: string;
@@ -25,26 +25,17 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
     if (req.method === "PUT") {
       const body = await readJson<SettingsPayload>(req);
-      const payload = {
-        firebase_uid: user.uid,
-        default_model: body.default_model || defaultSettings.default_model,
-        updated_at: new Date().toISOString(),
-      };
-      const rows = await supabaseRequest<Array<typeof payload>>(
-        "user_settings?on_conflict=firebase_uid",
-        {
-          method: "POST",
-          headers: { Prefer: "resolution=merge-duplicates,return=representation" },
-          body: JSON.stringify(payload),
-        },
-      );
-      sendJson(res, 200, { settings: rows[0] });
+      const model = body.default_model || defaultSettings.default_model;
+      await upsertSettings(user, model);
+      sendJson(res, 200, { settings: { default_model: model } });
       return;
     }
 
-    const rows = await supabaseRequest<Array<typeof defaultSettings>>(
-      `user_settings?${userFilter(user)}&select=default_model&limit=1`,
-    );
-    sendJson(res, 200, { settings: rows[0] || defaultSettings });
+    const settings = await getSettings(user);
+    sendJson(res, 200, {
+      settings: settings
+        ? { default_model: settings.defaultModel }
+        : defaultSettings,
+    });
   });
 }

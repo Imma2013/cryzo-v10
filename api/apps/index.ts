@@ -7,7 +7,7 @@ import {
   type ApiRequest,
   type ApiResponse,
 } from "../_lib/http";
-import { ensureUser, supabaseRequest, userFilter } from "../_lib/supabase";
+import { ensureUser, listApps, createApp } from "../_lib/convex";
 
 type AppPayload = {
   name?: string;
@@ -27,25 +27,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         sendJson(res, 400, { error: "App name is required." });
         return;
       }
-      const rows = await supabaseRequest(
-        "apps",
-        {
-          method: "POST",
-          headers: { Prefer: "return=representation" },
-          body: JSON.stringify({
-            firebase_uid: user.uid,
-            name,
-            description: body.description?.trim() || null,
-          }),
-        },
-      );
-      sendJson(res, 201, { app: Array.isArray(rows) ? rows[0] : rows });
+      const app = await createApp(user, name, body.description?.trim());
+      sendJson(res, 201, { app });
       return;
     }
 
-    const apps = await supabaseRequest(
-      `apps?${userFilter(user)}&select=*&order=updated_at.desc`,
-    );
+    const apps = await listApps(user);
     sendJson(res, 200, { apps });
   });
 }

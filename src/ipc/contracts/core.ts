@@ -154,12 +154,15 @@ type ClientFromContracts<
 export function createClient<
   T extends Record<string, IpcContract<string, z.ZodType, z.ZodType>>,
 >(contracts: T): ClientFromContracts<T> {
-  // Access ipcRenderer from the window.electron exposed by preload
   const getIpcRenderer = () => (window as any).electron?.ipcRenderer;
+  const isWeb = () => typeof window !== "undefined" && !getIpcRenderer();
 
   const client = {} as ClientFromContracts<T>;
   for (const [methodName, contract] of Object.entries(contracts)) {
     (client as any)[methodName] = async (input: unknown) => {
+      if (isWeb()) {
+        return webInvoke(contract.channel, input);
+      }
       const ipcRenderer = getIpcRenderer();
       if (!ipcRenderer) {
         throw new Error(
@@ -170,6 +173,32 @@ export function createClient<
     };
   }
   return client;
+}
+
+function getWebAuthToken(): string | null {
+  try {
+    const stored = localStorage.getItem("cryzo.auth");
+    if (stored) return JSON.parse(stored).idToken ?? null;
+  } catch {}
+  return null;
+}
+
+async function webInvoke(channel: string, input: unknown): Promise<unknown> {
+  const token = getWebAuthToken();
+  const response = await fetch("/api/ipc", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ channel, input }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `[${channel}] Request failed: ${response.status}`);
+  }
+  const data = await response.json();
+  return data.result;
 }
 
 // =============================================================================
@@ -205,12 +234,16 @@ export function createEventClient<
   T extends Record<string, EventContract<string, z.ZodType>>,
 >(events: T): EventClientFromContracts<T> {
   const getIpcRenderer = () => (window as any).electron?.ipcRenderer;
+  const isWeb = () => typeof window !== "undefined" && !getIpcRenderer();
 
   const client = {} as EventClientFromContracts<T>;
 
   for (const [key, event] of Object.entries(events)) {
     const methodName = `on${key.charAt(0).toUpperCase()}${key.slice(1)}`;
     (client as any)[methodName] = (handler: (payload: unknown) => void) => {
+      if (isWeb()) {
+        return () => {};
+      }
       const ipcRenderer = getIpcRenderer();
       if (!ipcRenderer) {
         console.error(
@@ -337,6 +370,13 @@ export function createStreamClient<
         onError: (data: z.infer<TError>) => void;
       },
     ): void {
+      const isWeb =
+        typeof window !== "undefined" && !getIpcRenderer();
+      if (isWeb) {
+        webStream(contract, input, callbacks);
+        return;
+      }
+
       setupListeners();
 
       const ipcRenderer = getIpcRenderer();
@@ -378,6 +418,79 @@ export function createStreamClient<
       return streams.has(key);
     },
   };
+}
+
+// =============================================================================
+// Web Stream Helper
+// =============================================================================
+
+async function webStream(
+  contract: { channel: string; keyField: string },
+  input: unknown,
+  callbacks: { onChunk: Function; onEnd: Function; onError: Function },
+) {
+  const token = getWebAuthToken();
+  try {
+    const response = await fetch("/api/ipc/stream", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ channel: contract.channel, input }),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      callbacks.onError({
+        [contract.keyField]: (input as Record<string, unknown>)[
+          contract.keyField
+        ],
+        error: text || "Stream request failed",
+      });
+      return;
+    }
+    const reader = response.body?.getReader();
+    if (!reader) {
+      callbacks.onEnd({
+        [contract.keyField]: (input as Record<string, unknown>)[
+          contract.keyField
+        ],
+      });
+      return;
+    }
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const json = line.slice(6);
+        if (json === "[DONE]") continue;
+        try {
+          const parsed = JSON.parse(json);
+          if (parsed.type === "chunk") callbacks.onChunk(parsed.data);
+          else if (parsed.type === "end") callbacks.onEnd(parsed.data);
+          else if (parsed.type === "error") callbacks.onError(parsed.data);
+        } catch {}
+      }
+    }
+    callbacks.onEnd({
+      [contract.keyField]: (input as Record<string, unknown>)[
+        contract.keyField
+      ],
+    });
+  } catch (err: any) {
+    callbacks.onError({
+      [contract.keyField]: (input as Record<string, unknown>)[
+        contract.keyField
+      ],
+      error: err.message ?? "Stream failed",
+    });
+  }
 }
 
 // =============================================================================
